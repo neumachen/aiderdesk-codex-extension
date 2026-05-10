@@ -408,7 +408,11 @@ export default class AiderDeskCodexExtension implements Extension {
     author: 'Kareem Hepburn',
   };
 
-  private currentSystemPrompt: string | undefined;
+  // Keyed by model id, not stored in a single field, because a second agent
+  // run starting before the first finishes would otherwise overwrite the
+  // first's prompt and corrupt mid-flight getProviderOptions reads. Same-model
+  // concurrent runs still race on a single key — that's a known limitation.
+  private systemPromptByModel = new Map<string, string>();
 
   async onLoad(context: ExtensionContext): Promise<void> {
     try {
@@ -439,7 +443,11 @@ export default class AiderDeskCodexExtension implements Extension {
     if (event.providerProfile.provider.name !== PROVIDER_ID) {
       return undefined;
     }
-    this.currentSystemPrompt = event.systemPrompt ?? undefined;
+    if (event.systemPrompt) {
+      this.systemPromptByModel.set(event.model, event.systemPrompt);
+    } else {
+      this.systemPromptByModel.delete(event.model);
+    }
     return {
       systemPrompt: '', // Forwarded as providerOptions.openai.instructions instead.
     };
@@ -471,7 +479,7 @@ export default class AiderDeskCodexExtension implements Extension {
     const getProviderOptions = (model: Model) => ({
       openai: {
         store: true,
-        instructions: this.currentSystemPrompt || '',
+        instructions: this.systemPromptByModel.get(model.id) ?? '',
         reasoningEffort: parseModelId(model.id).reasoning,
       },
     });
