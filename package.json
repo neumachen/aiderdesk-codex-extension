@@ -1,0 +1,15 @@
+{
+  "name": "aiderdesk-codex-extension",
+  "version": "1.0.0",
+  "description": "AiderDesk extension that registers an OpenAI Codex provider authenticated against a pre-provisioned ChatGPT auth file. No browser OAuth — container-friendly.",
+  "main": "index.ts",
+  "author": "Kareem Hepburn",
+  "license": "MIT",
+  "dependencies": {
+    "@ai-sdk/openai": "^2.0.101"
+  },
+  "devDependencies": {
+    "@aiderdesk/extensions": "^0.12.0",
+    "@types/node": "^25.5.2"
+  }
+}
