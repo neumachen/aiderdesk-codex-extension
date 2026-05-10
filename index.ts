@@ -31,6 +31,12 @@ const EXPIRY_BUFFER_MS = 60_000;
 // stall every queued LLM call indefinitely.
 const REFRESH_TIMEOUT_MS = 15_000;
 
+// Responses API `store` flag. Defaults to true so the AI SDK's
+// item_reference replay path works for tool results across turns. Flip via
+// CODEX_STORE=false (or 0) if the Codex backend rejects stored responses.
+const isEnvFalsy = (v: string | undefined): boolean => v === 'false' || v === '0';
+const isStoreEnabled = (): boolean => !isEnvFalsy(process.env.CODEX_STORE);
+
 // Sourced from the live Codex backend `/models` endpoint
 // (https://chatgpt.com/backend-api/codex/models). To refresh, run any
 // `codex` command and re-read ~/.codex/models_cache.json, or hit the
@@ -483,7 +489,7 @@ export default class AiderDeskCodexExtension implements Extension {
 
     const getProviderOptions = (model: Model) => ({
       openai: {
-        store: true,
+        store: isStoreEnabled(),
         instructions: this.systemPromptByModel.get(model.id) ?? '',
         reasoningEffort: parseModelId(model.id).reasoning,
       },

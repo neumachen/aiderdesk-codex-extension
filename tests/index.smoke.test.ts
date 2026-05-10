@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { AgentStartedEvent, ExtensionContext, ProviderProfile, SettingsData } from '@aiderdesk/extensions';
 
@@ -97,6 +97,36 @@ describe('AiderDeskCodexExtension', () => {
 
       const opts = provider.strategy.getProviderOptions?.({ id: 'mystery-model' } as never);
       expect(opts?.openai).toMatchObject({ reasoningEffort: 'medium' });
+    });
+
+    describe('CODEX_STORE env gate', () => {
+      afterEach(() => {
+        vi.unstubAllEnvs();
+      });
+
+      it('defaults store to true when unset', () => {
+        vi.stubEnv('CODEX_STORE', '');
+        const ext = new AiderDeskCodexExtension();
+        const [provider] = ext.getProviders(stubContext);
+        const opts = provider?.strategy.getProviderOptions?.({ id: 'gpt-5.5-medium' } as never);
+        expect(opts?.openai).toMatchObject({ store: true });
+      });
+
+      it.each(['false', '0'])('honors CODEX_STORE=%s by setting store to false', (value) => {
+        vi.stubEnv('CODEX_STORE', value);
+        const ext = new AiderDeskCodexExtension();
+        const [provider] = ext.getProviders(stubContext);
+        const opts = provider?.strategy.getProviderOptions?.({ id: 'gpt-5.5-medium' } as never);
+        expect(opts?.openai).toMatchObject({ store: false });
+      });
+
+      it('treats other values as truthy', () => {
+        vi.stubEnv('CODEX_STORE', 'true');
+        const ext = new AiderDeskCodexExtension();
+        const [provider] = ext.getProviders(stubContext);
+        const opts = provider?.strategy.getProviderOptions?.({ id: 'gpt-5.5-medium' } as never);
+        expect(opts?.openai).toMatchObject({ store: true });
+      });
     });
   });
 

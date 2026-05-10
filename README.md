@@ -32,11 +32,12 @@ If none exist, the extension throws an error listing all candidates.
 
 ## Environment variables
 
-| Variable             | Purpose                                                                                     |
-| -------------------- | ------------------------------------------------------------------------------------------- |
-| `CODEX_AUTH_FILE`    | Absolute path to the auth JSON file. Highest precedence.                                    |
-| `CODEX_HOME`         | If set, `${CODEX_HOME}/auth.json` is used.                                                  |
-| `CODEX_AUTH_PERSIST` | Set to `false` or `0` to disable writeback after a successful refresh. Default: write back. |
+| Variable             | Purpose                                                                                                                                                                                                              |
+| -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `CODEX_AUTH_FILE`    | Absolute path to the auth JSON file. Highest precedence.                                                                                                                                                             |
+| `CODEX_HOME`         | If set, `${CODEX_HOME}/auth.json` is used.                                                                                                                                                                           |
+| `CODEX_AUTH_PERSIST` | Set to `false` or `0` to disable writeback after a successful refresh. Default: write back.                                                                                                                          |
+| `CODEX_STORE`        | Set to `false` or `0` to call the Responses API with `store: false`. Default: `store: true` so multi-turn tool flows replay correctly via `item_reference`. Flip back if the Codex backend rejects stored responses. |
 
 ## Supported auth file shapes
 
@@ -145,7 +146,7 @@ Reasoning tiers (per registry):
 
 ## Responses API state (`store: true`)
 
-The extension calls the OpenAI Responses API with `store: true` so that tool results from previous turns can be replayed via `item_reference` IDs. With `store: false`, the AI SDK silently drops tool results between turns (it warns: `Results for OpenAI tool ... are not sent to the API when store is false`), which would break multi-step tool flows. If you observe Codex-backend rejections of `store: true`, edit `getProviderOptions` in [`index.ts`](./index.ts) and flip it back.
+The extension calls the OpenAI Responses API with `store: true` so that tool results from previous turns can be replayed via `item_reference` IDs. With `store: false`, the AI SDK silently drops tool results between turns (it warns: `Results for OpenAI tool ... are not sent to the API when store is false`), which would break multi-step tool flows. If you observe Codex-backend rejections of `store: true`, set `CODEX_STORE=false` to flip it back without rebuilding the extension.
 
 ## Troubleshooting
 
