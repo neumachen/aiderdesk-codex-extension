@@ -313,8 +313,30 @@ const refreshAccessToken = async (refreshToken: string, context: ExtensionContex
 };
 
 // --- Get valid access token (no interactive fallback) ---
+//
+// In-memory cache + single-flight: concurrent callers coalesce onto one
+// refresh promise so we never POST the same refresh_token twice (which would
+// have one caller succeed and the rotation invalidate the other), and we stop
+// stat'ing + reading the auth file on every LLM call.
 
-const getValidAccessToken = async (context: ExtensionContext): Promise<{ accessToken: string; accountId: string }> => {
+interface CachedAuth {
+  accessToken: string;
+  accountId: string;
+  expiresAt: number | null;
+}
+
+let cachedAuth: CachedAuth | null = null;
+let inflightAuth: Promise<CachedAuth> | null = null;
+
+const isCachedAuthFresh = (cached: CachedAuth | null): cached is CachedAuth => {
+  if (!cached) return false;
+  // Tokens with no expiry metadata aren't cached — re-read the file each time
+  // so external updates (e.g. a concurrent `codex login`) are picked up.
+  if (cached.expiresAt === null) return false;
+  return Date.now() < cached.expiresAt - EXPIRY_BUFFER_MS;
+};
+
+const fetchAuth = async (context: ExtensionContext): Promise<CachedAuth> => {
   const resolved = await resolveAuthPath();
   const auth = await loadAuthFile(resolved.path);
 
@@ -327,7 +349,7 @@ const getValidAccessToken = async (context: ExtensionContext): Promise<{ accessT
         `Codex auth at ${resolved.path} has an access token without a chatgpt_account_id claim and no account_id field.`,
       );
     }
-    return { accessToken: auth.accessToken, accountId };
+    return { accessToken: auth.accessToken, accountId, expiresAt: auth.expiresAt };
   }
 
   if (!auth.refreshToken) {
@@ -352,7 +374,25 @@ const getValidAccessToken = async (context: ExtensionContext): Promise<{ accessT
     throw new Error('Failed to extract account ID from refreshed Codex token');
   }
   await persistRefreshedTokens(resolved.path, { ...refreshed, accountId }, context);
-  return { accessToken: refreshed.accessToken, accountId };
+  return { accessToken: refreshed.accessToken, accountId, expiresAt: refreshed.expiresAt };
+};
+
+const getValidAccessToken = async (context: ExtensionContext): Promise<{ accessToken: string; accountId: string }> => {
+  if (isCachedAuthFresh(cachedAuth)) {
+    return { accessToken: cachedAuth.accessToken, accountId: cachedAuth.accountId };
+  }
+  if (inflightAuth) {
+    const cached = await inflightAuth;
+    return { accessToken: cached.accessToken, accountId: cached.accountId };
+  }
+  inflightAuth = fetchAuth(context);
+  try {
+    const fresh = await inflightAuth;
+    cachedAuth = fresh;
+    return { accessToken: fresh.accessToken, accountId: fresh.accountId };
+  } finally {
+    inflightAuth = null;
+  }
 };
 
 // --- Extension class ---
