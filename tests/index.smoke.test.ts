@@ -178,4 +178,32 @@ describe('AiderDeskCodexExtension', () => {
       expect(result).toEqual({ systemPrompt: '' });
     });
   });
+
+  describe('strategy.isRetryable', () => {
+    const getStrategy = () => {
+      const ext = new AiderDeskCodexExtension();
+      const [provider] = ext.getProviders(stubContext);
+      if (!provider) throw new Error('expected at least one provider');
+      return provider.strategy;
+    };
+
+    it.each([
+      { name: 'top-level statusCode', error: { statusCode: 401 } },
+      { name: 'top-level status', error: { status: 401 } },
+      { name: 'nested response.status', error: { response: { status: 401 } } },
+      { name: 'message contains 401', error: { message: 'Request failed with 401 Unauthorized' } },
+    ])('marks 401 errors as retryable: $name', ({ error }) => {
+      expect(getStrategy().isRetryable?.(error)).toBe(true);
+    });
+
+    it.each([
+      { name: '500 server error', error: { statusCode: 500 } },
+      { name: 'plain Error', error: new Error('boom') },
+      { name: 'undefined', error: undefined },
+      { name: 'null', error: null },
+      { name: 'string with 4012 (no word boundary)', error: { message: 'something 4012 something' } },
+    ])('does not mark non-401 errors as retryable: $name', ({ error }) => {
+      expect(getStrategy().isRetryable?.(error)).toBe(false);
+    });
+  });
 });

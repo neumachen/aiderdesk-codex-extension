@@ -406,6 +406,25 @@ const getValidAccessToken = async (context: ExtensionContext): Promise<{ accessT
   }
 };
 
+const invalidateAuthCache = (): void => {
+  cachedAuth = null;
+};
+
+// Match common shapes that AI SDK / fetch-based errors take when the API
+// returns 401: top-level status codes, nested response objects, or status
+// embedded in the message string (e.g. "401 Unauthorized").
+const is401Error = (error: unknown): boolean => {
+  if (!error || typeof error !== 'object') return false;
+  const obj = error as Record<string, unknown>;
+  if (obj.status === 401 || obj.statusCode === 401) return true;
+  const response = obj.response;
+  if (response && typeof response === 'object' && (response as Record<string, unknown>).status === 401) {
+    return true;
+  }
+  if (typeof obj.message === 'string' && /\b401\b/.test(obj.message)) return true;
+  return false;
+};
+
 // --- Extension class ---
 
 const PROVIDER_ID = 'codex-auth';
@@ -495,12 +514,24 @@ export default class AiderDeskCodexExtension implements Extension {
       },
     });
 
+    const isRetryable = (error: unknown): boolean => {
+      if (is401Error(error)) {
+        // The cached access token is stale or has been revoked externally.
+        // Drop it so the next createLlm call re-reads auth.json (and refreshes
+        // if needed) instead of handing back the same dead token.
+        invalidateAuthCache();
+        context.log('Codex Auth: 401 detected — invalidating cached token before retry', 'warn');
+        return true;
+      }
+      return false;
+    };
+
     return [
       {
         id: PROVIDER_ID,
         name: 'Codex Auth',
         provider: { name: PROVIDER_ID },
-        strategy: { createLlm, loadModels, getProviderOptions },
+        strategy: { createLlm, loadModels, getProviderOptions, isRetryable },
       },
     ];
   }
