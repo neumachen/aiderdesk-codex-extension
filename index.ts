@@ -27,6 +27,10 @@ const CODEX_BASE_URL = 'https://chatgpt.com/backend-api/codex';
 // Refresh if the access token is within this window of expiring.
 const EXPIRY_BUFFER_MS = 60_000;
 
+// Hard cap on the OAuth refresh request so a hung auth.openai.com doesn't
+// stall every queued LLM call indefinitely.
+const REFRESH_TIMEOUT_MS = 15_000;
+
 // Sourced from the live Codex backend `/models` endpoint
 // (https://chatgpt.com/backend-api/codex/models). To refresh, run any
 // `codex` command and re-read ~/.codex/models_cache.json, or hit the
@@ -291,6 +295,7 @@ const refreshAccessToken = async (refreshToken: string, context: ExtensionContex
       refresh_token: refreshToken,
       client_id: getClientId(),
     }),
+    signal: AbortSignal.timeout(REFRESH_TIMEOUT_MS),
   });
   if (!response.ok) {
     const text = await response.text().catch(() => '');
