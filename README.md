@@ -32,12 +32,13 @@ If none exist, the extension throws an error listing all candidates.
 
 ## Environment variables
 
-| Variable             | Purpose                                                                                                                                                                                                              |
-| -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `CODEX_AUTH_FILE`    | Absolute path to the auth JSON file. Highest precedence.                                                                                                                                                             |
-| `CODEX_HOME`         | If set, `${CODEX_HOME}/auth.json` is used.                                                                                                                                                                           |
-| `CODEX_AUTH_PERSIST` | Set to `false` or `0` to disable writeback after a successful refresh. Default: write back.                                                                                                                          |
-| `CODEX_STORE`        | Set to `false` or `0` to call the Responses API with `store: false`. Default: `store: true` so multi-turn tool flows replay correctly via `item_reference`. Flip back if the Codex backend rejects stored responses. |
+| Variable                     | Purpose                                                                                                                                                                                                              |
+| ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `CODEX_AUTH_FILE`            | Absolute path to the auth JSON file. Highest precedence.                                                                                                                                                             |
+| `CODEX_HOME`                 | If set, `${CODEX_HOME}/auth.json` is used.                                                                                                                                                                           |
+| `CODEX_AUTH_PERSIST`         | Set to `false` or `0` to disable writeback after a successful refresh. Default: write back.                                                                                                                          |
+| `CODEX_STORE`                | Set to `false` or `0` to call the Responses API with `store: false`. Default: `store: true` so multi-turn tool flows replay correctly via `item_reference`. Flip back if the Codex backend rejects stored responses. |
+| `CODEX_FALLBACK_MODELS_ONLY` | Set to a truthy value to skip the live `/models` fetch and `models_cache.json` lookup, using the hardcoded fallback model list only. Useful for air-gapped runs and test determinism.                                |
 
 ## Supported auth file shapes
 
@@ -123,19 +124,15 @@ AiderDesk picks up the extension via hot reload.
 
 ## Available models
 
-Codex OAuth tokens cannot access `/v1/models`, so the model list is hardcoded. It mirrors the user-visible models from the Codex backend's `/models` endpoint (also cached at `~/.codex/models_cache.json` after any `codex` invocation). To refresh, update `CODEX_BASE_MODELS` in [`index.ts`](./index.ts).
+The model list is loaded dynamically. Each call to `loadModels` tries, in order:
 
-Each base model is exposed at four reasoning tiers, so the picker shows `<slug>-low`, `<slug>-medium`, `<slug>-high`, and `<slug>-xhigh`. The suffix drives `reasoning.effort` per request; the underlying slug sent to the Codex backend is the same.
+1. **Live `/models` endpoint** at `https://chatgpt.com/backend-api/codex/models` (using your Codex auth token). This auto-discovers new model slugs and reasoning tiers as OpenAI ships them.
+2. **`models_cache.json`** maintained by the Codex CLI (looked up next to `auth.json` via `$CODEX_HOME` or `$HOME/.codex/`). Used when the network is unreachable or the live request fails.
+3. **A hardcoded fallback list** baked into [`index.ts`](./index.ts). Used only when both above sources fail. Set `CODEX_FALLBACK_MODELS_ONLY=1` to skip the live and cache lookups entirely (useful for air-gapped environments and deterministic tests).
 
-| Base slug       | Context window | Description (from registry)                                      |
-| --------------- | -------------- | ---------------------------------------------------------------- |
-| `gpt-5.5`       | 272k           | Frontier model for complex coding, research, and real-world work |
-| `gpt-5.4`       | 272k           | Strong model for everyday coding                                 |
-| `gpt-5.4-mini`  | 272k           | Small, fast, and cost-efficient for simpler coding tasks         |
-| `gpt-5.3-codex` | 272k           | Coding-optimized model                                           |
-| `gpt-5.2`       | 272k           | Optimized for professional work and long-running agents          |
+Hidden entries (`visibility: "hide"`) and entries marked `supported_in_api: false` are filtered out.
 
-Reasoning tiers (per registry):
+Each base model is exposed at the reasoning tiers it supports, so the picker shows entries like `<slug>-low`, `<slug>-medium`, `<slug>-high`, and `<slug>-xhigh`. The suffix drives `reasoning.effort` per request; the underlying slug sent to the Codex backend is the slug without the suffix. Tiers the registry advertises that aren't in the canonical set (`low`, `medium`, `high`, `xhigh`) are dropped — adding a new one is a deliberate edit to `REASONING_TIERS` in [`index.ts`](./index.ts).
 
 | Tier     | When to pick it                                     |
 | -------- | --------------------------------------------------- |

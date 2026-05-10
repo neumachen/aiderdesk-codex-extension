@@ -37,38 +37,36 @@ const REFRESH_TIMEOUT_MS = 15_000;
 const isEnvFalsy = (v: string | undefined): boolean => v === 'false' || v === '0';
 const isStoreEnabled = (): boolean => !isEnvFalsy(process.env.CODEX_STORE);
 
-// Sourced from the live Codex backend `/models` endpoint
-// (https://chatgpt.com/backend-api/codex/models). To refresh, run any
-// `codex` command and re-read ~/.codex/models_cache.json, or hit the
-// endpoint directly with the Codex auth token. Hidden models
-// (visibility: "hide", e.g. codex-auto-review) are intentionally omitted.
+// Reasoning tier names the Codex backend exposes via the
+// supported_reasoning_levels[].effort field. Tiers it advertises that aren't
+// in this set are dropped at parse time — adding a new tier here is a
+// deliberate opt-in.
 type ReasoningTier = 'low' | 'medium' | 'high' | 'xhigh';
 const REASONING_TIERS: readonly ReasoningTier[] = ['low', 'medium', 'high', 'xhigh'];
 
-interface CodexBaseModel {
+const DEFAULT_CONTEXT_WINDOW = 272000;
+const DEFAULT_MAX_OUTPUT_TOKENS = 128000;
+
+// Each tier suffix yields a separate AiderDesk model entry. The suffix drives
+// reasoning.effort per-call via getProviderOptions; the slug (without suffix)
+// is what gets sent to the Codex backend.
+interface CodexRegistryModel {
   slug: string;
   contextWindow: number;
+  reasoningTiers: readonly ReasoningTier[];
 }
 
-const CODEX_BASE_MODELS: readonly CodexBaseModel[] = [
-  { slug: 'gpt-5.5', contextWindow: 272000 },
-  { slug: 'gpt-5.4', contextWindow: 272000 },
-  { slug: 'gpt-5.4-mini', contextWindow: 272000 },
-  { slug: 'gpt-5.3-codex', contextWindow: 272000 },
-  { slug: 'gpt-5.2', contextWindow: 272000 },
+// Used when both the live /models fetch and the on-disk cache file fail.
+// Mirrors the visible models the Codex backend was advertising when this was
+// last refreshed; auto-discovered tiers/slugs from the live registry will
+// replace this list whenever the network or cache file is reachable.
+const FALLBACK_CODEX_MODELS: readonly CodexRegistryModel[] = [
+  { slug: 'gpt-5.5', contextWindow: DEFAULT_CONTEXT_WINDOW, reasoningTiers: REASONING_TIERS },
+  { slug: 'gpt-5.4', contextWindow: DEFAULT_CONTEXT_WINDOW, reasoningTiers: REASONING_TIERS },
+  { slug: 'gpt-5.4-mini', contextWindow: DEFAULT_CONTEXT_WINDOW, reasoningTiers: REASONING_TIERS },
+  { slug: 'gpt-5.3-codex', contextWindow: DEFAULT_CONTEXT_WINDOW, reasoningTiers: REASONING_TIERS },
+  { slug: 'gpt-5.2', contextWindow: DEFAULT_CONTEXT_WINDOW, reasoningTiers: REASONING_TIERS },
 ];
-
-// Each (model, tier) is a separate AiderDesk model entry. The tier suffix
-// drives `reasoning.effort` per-call via getProviderOptions; the underlying
-// slug is what gets sent to the Codex backend.
-const CODEX_MODELS: Model[] = CODEX_BASE_MODELS.flatMap(({ slug, contextWindow }) =>
-  REASONING_TIERS.map((tier) => ({
-    id: `${slug}-${tier}`,
-    providerId: '',
-    maxInputTokens: contextWindow,
-    maxOutputTokensLimit: 128000,
-  })),
-);
 
 const parseModelId = (id: string): { slug: string; reasoning: ReasoningTier } => {
   for (const tier of REASONING_TIERS) {
@@ -79,6 +77,69 @@ const parseModelId = (id: string): { slug: string; reasoning: ReasoningTier } =>
   }
   // Unknown / legacy id — pass through with the registry default.
   return { slug: id, reasoning: 'medium' };
+};
+
+// --- Model registry parsing ---
+//
+// Shape we accept: either { models: [...] } (Codex CLI's models_cache.json
+// format and the live /models response) or a bare array. Each entry follows
+// the documented Codex backend shape; unknown fields are ignored.
+
+interface RawCodexModel {
+  slug?: unknown;
+  context_window?: unknown;
+  supported_reasoning_levels?: unknown;
+  visibility?: unknown;
+  supported_in_api?: unknown;
+}
+
+const isReasoningTier = (s: unknown): s is ReasoningTier =>
+  typeof s === 'string' && (REASONING_TIERS as readonly string[]).includes(s);
+
+export const parseRegistryEntry = (raw: unknown): CodexRegistryModel | null => {
+  if (!raw || typeof raw !== 'object') return null;
+  const r = raw as RawCodexModel;
+  if (typeof r.slug !== 'string' || r.slug.length === 0) return null;
+  // Hidden entries (e.g. codex-auto-review) and ones that aren't reachable via
+  // the API surface we use are deliberately dropped.
+  if (r.visibility !== undefined && r.visibility !== 'list') return null;
+  if (r.supported_in_api === false) return null;
+
+  const contextWindow =
+    typeof r.context_window === 'number' && r.context_window > 0 ? r.context_window : DEFAULT_CONTEXT_WINDOW;
+
+  const tiers: ReasoningTier[] = [];
+  if (Array.isArray(r.supported_reasoning_levels)) {
+    for (const lvl of r.supported_reasoning_levels) {
+      if (lvl && typeof lvl === 'object') {
+        const effort = (lvl as { effort?: unknown }).effort;
+        if (isReasoningTier(effort) && !tiers.includes(effort)) {
+          tiers.push(effort);
+        }
+      }
+    }
+  }
+  // Registry didn't declare any tiers we know about — fall back to all known.
+  const reasoningTiers = tiers.length > 0 ? tiers : [...REASONING_TIERS];
+
+  return { slug: r.slug, contextWindow, reasoningTiers };
+};
+
+export const parseRegistry = (data: unknown): CodexRegistryModel[] => {
+  let arr: unknown[];
+  if (Array.isArray(data)) {
+    arr = data;
+  } else if (data && typeof data === 'object' && Array.isArray((data as { models?: unknown }).models)) {
+    arr = (data as { models: unknown[] }).models;
+  } else {
+    return [];
+  }
+  return arr.map(parseRegistryEntry).filter((m): m is CodexRegistryModel => m !== null);
+};
+
+const isFallbackModelsOnly = (): boolean => {
+  const v = process.env.CODEX_FALLBACK_MODELS_ONLY;
+  return v !== undefined && v !== '' && !isEnvFalsy(v);
 };
 
 // --- Auth file resolution ---
@@ -425,6 +486,95 @@ const is401Error = (error: unknown): boolean => {
   return false;
 };
 
+// --- Codex backend HTTP helpers ---
+
+const codexHeaders = (accountId: string): Record<string, string> => ({
+  'chatgpt-account-id': accountId,
+  'OpenAI-Beta': 'responses=experimental',
+  originator: 'aiderdesk',
+  'User-Agent': `aiderdesk (${platform()} ${release()}; ${arch()})`,
+});
+
+// --- Dynamic model registry ---
+//
+// Strategy on each loadModels call:
+//   1. Try the live /models endpoint with the user's auth token. This auto-
+//      discovers new model slugs and reasoning tiers as OpenAI ships them.
+//   2. If that fails (offline, 4xx, 5xx, etc.), fall back to the on-disk
+//      models_cache.json the Codex CLI maintains.
+//   3. If that's also unreachable, fall back to FALLBACK_CODEX_MODELS.
+//
+// CODEX_FALLBACK_MODELS_ONLY=1 short-circuits straight to the hardcoded list,
+// useful for air-gapped runs and deterministic tests.
+
+const fetchLiveModels = async (context: ExtensionContext): Promise<CodexRegistryModel[]> => {
+  const { accessToken, accountId } = await getValidAccessToken(context);
+  const response = await fetch(`${CODEX_BASE_URL}/models`, {
+    headers: {
+      authorization: `Bearer ${accessToken}`,
+      ...codexHeaders(accountId),
+    },
+    signal: AbortSignal.timeout(REFRESH_TIMEOUT_MS),
+  });
+  if (!response.ok) {
+    throw new Error(`Codex /models endpoint returned ${response.status} ${response.statusText}`);
+  }
+  return parseRegistry((await response.json()) as unknown);
+};
+
+const candidateCachePaths = (): string[] => {
+  const out: string[] = [];
+  const codexHome = process.env.CODEX_HOME;
+  if (codexHome) out.push(join(codexHome, 'models_cache.json'));
+  const home = homedir();
+  if (home) out.push(join(home, '.codex', 'models_cache.json'));
+  out.push('/root/.codex/models_cache.json');
+  return out;
+};
+
+const readCacheModels = async (): Promise<CodexRegistryModel[]> => {
+  for (const path of candidateCachePaths()) {
+    if (await fileExists(path)) {
+      const text = await readFile(path, 'utf-8');
+      return parseRegistry(JSON.parse(text) as unknown);
+    }
+  }
+  throw new Error('models_cache.json not found in any candidate path');
+};
+
+const loadCodexModels = async (context: ExtensionContext): Promise<CodexRegistryModel[]> => {
+  if (isFallbackModelsOnly()) {
+    context.log('Codex models: CODEX_FALLBACK_MODELS_ONLY set — using hardcoded list', 'debug');
+    return [...FALLBACK_CODEX_MODELS];
+  }
+
+  try {
+    const live = await fetchLiveModels(context);
+    if (live.length > 0) {
+      context.log(`Codex models: loaded ${live.length} entries from /models endpoint`, 'debug');
+      return live;
+    }
+  } catch (err) {
+    context.log(`Codex models: /models fetch failed: ${err instanceof Error ? err.message : String(err)}`, 'debug');
+  }
+
+  try {
+    const cached = await readCacheModels();
+    if (cached.length > 0) {
+      context.log(`Codex models: loaded ${cached.length} entries from models_cache.json`, 'debug');
+      return cached;
+    }
+  } catch (err) {
+    context.log(
+      `Codex models: models_cache.json read failed: ${err instanceof Error ? err.message : String(err)}`,
+      'debug',
+    );
+  }
+
+  context.log('Codex models: falling back to hardcoded list', 'warn');
+  return [...FALLBACK_CODEX_MODELS];
+};
+
 // --- Extension class ---
 
 const PROVIDER_ID = 'codex-auth';
@@ -486,23 +636,26 @@ export default class AiderDeskCodexExtension implements Extension {
   getProviders(context: ExtensionContext): ProviderDefinition[] {
     const createLlm = async (_profile: ProviderProfile, model: Model) => {
       const { slug, reasoning } = parseModelId(model.id);
-      context.log(`Creating OpenAI Codex model: ${slug} (reasoning=${reasoning})`, 'info');
+      context.log(`Creating OpenAI Codex model: ${slug} (reasoning=${reasoning})`, 'debug');
       const { accessToken, accountId } = await getValidAccessToken(context);
       const provider = createOpenAI({
         baseURL: CODEX_BASE_URL,
         apiKey: accessToken,
-        headers: {
-          'chatgpt-account-id': accountId,
-          'OpenAI-Beta': 'responses=experimental',
-          originator: 'aiderdesk',
-          'User-Agent': `aiderdesk (${platform()} ${release()}; ${arch()})`,
-        },
+        headers: codexHeaders(accountId),
       });
       return provider.responses(slug);
     };
 
     const loadModels = async (profile: ProviderProfile): Promise<LoadModelsResponse> => {
-      const models = CODEX_MODELS.map((m) => ({ ...m, providerId: profile.id }));
+      const registry = await loadCodexModels(context);
+      const models: Model[] = registry.flatMap(({ slug, contextWindow, reasoningTiers }) =>
+        reasoningTiers.map((tier) => ({
+          id: `${slug}-${tier}`,
+          providerId: profile.id,
+          maxInputTokens: contextWindow,
+          maxOutputTokensLimit: DEFAULT_MAX_OUTPUT_TOKENS,
+        })),
+      );
       return { models, success: true };
     };
 

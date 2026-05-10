@@ -1,8 +1,8 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { AgentStartedEvent, ExtensionContext, ProviderProfile, SettingsData } from '@aiderdesk/extensions';
 
-import AiderDeskCodexExtension from '../index';
+import AiderDeskCodexExtension, { parseRegistry, parseRegistryEntry } from '../index';
 
 const stubContext = { log: () => {} } as unknown as ExtensionContext;
 
@@ -50,8 +50,18 @@ describe('AiderDeskCodexExtension', () => {
     });
   });
 
-  describe('strategy.loadModels', () => {
-    it('returns 4 reasoning-tier variants for each of 5 base models', async () => {
+  describe('strategy.loadModels (hardcoded fallback path)', () => {
+    beforeEach(() => {
+      // Force the hardcoded fallback so the assertion is independent of what
+      // happens to live in ~/.codex/ on the test machine.
+      vi.stubEnv('CODEX_FALLBACK_MODELS_ONLY', '1');
+    });
+
+    afterEach(() => {
+      vi.unstubAllEnvs();
+    });
+
+    it('returns 4 reasoning-tier variants for each of 5 fallback base models', async () => {
       const ext = new AiderDeskCodexExtension();
       const [provider] = ext.getProviders(stubContext);
       if (!provider) throw new Error('expected at least one provider');
@@ -205,5 +215,93 @@ describe('AiderDeskCodexExtension', () => {
     ])('does not mark non-401 errors as retryable: $name', ({ error }) => {
       expect(getStrategy().isRetryable?.(error)).toBe(false);
     });
+  });
+});
+
+describe('parseRegistryEntry', () => {
+  it('parses a typical live-registry entry', () => {
+    const result = parseRegistryEntry({
+      slug: 'gpt-5.5',
+      context_window: 272000,
+      supported_reasoning_levels: [{ effort: 'low' }, { effort: 'medium' }, { effort: 'high' }, { effort: 'xhigh' }],
+      visibility: 'list',
+      supported_in_api: true,
+    });
+    expect(result).toEqual({
+      slug: 'gpt-5.5',
+      contextWindow: 272000,
+      reasoningTiers: ['low', 'medium', 'high', 'xhigh'],
+    });
+  });
+
+  it('drops entries hidden from the list', () => {
+    expect(parseRegistryEntry({ slug: 'codex-auto-review', visibility: 'hide' })).toBeNull();
+  });
+
+  it('drops entries that are not API-supported', () => {
+    expect(parseRegistryEntry({ slug: 'gpt-5.3-codex-spark', supported_in_api: false })).toBeNull();
+  });
+
+  it('drops unknown reasoning tiers and dedupes', () => {
+    const result = parseRegistryEntry({
+      slug: 'gpt-5.5',
+      supported_reasoning_levels: [{ effort: 'low' }, { effort: 'extreme' }, { effort: 'high' }, { effort: 'low' }],
+    });
+    expect(result?.reasoningTiers).toEqual(['low', 'high']);
+  });
+
+  it('falls back to all known tiers when the entry omits supported_reasoning_levels', () => {
+    expect(parseRegistryEntry({ slug: 'gpt-5.5' })?.reasoningTiers).toEqual(['low', 'medium', 'high', 'xhigh']);
+  });
+
+  it('falls back to all known tiers when no level matches the canonical set', () => {
+    expect(
+      parseRegistryEntry({
+        slug: 'gpt-5.5',
+        supported_reasoning_levels: [{ effort: 'extreme' }, { effort: 'plaid' }],
+      })?.reasoningTiers,
+    ).toEqual(['low', 'medium', 'high', 'xhigh']);
+  });
+
+  it('falls back to default context window for missing or invalid values', () => {
+    expect(parseRegistryEntry({ slug: 'gpt-5.5' })?.contextWindow).toBe(272000);
+    expect(parseRegistryEntry({ slug: 'gpt-5.5', context_window: 0 })?.contextWindow).toBe(272000);
+    expect(parseRegistryEntry({ slug: 'gpt-5.5', context_window: 'huge' })?.contextWindow).toBe(272000);
+  });
+
+  it.each([null, undefined, 'string', 42, true, {}, { slug: '' }, { slug: 123 }])(
+    'rejects invalid input: %s',
+    (raw) => {
+      expect(parseRegistryEntry(raw)).toBeNull();
+    },
+  );
+});
+
+describe('parseRegistry', () => {
+  it('parses the {models: [...]} envelope used by /models and models_cache.json', () => {
+    const result = parseRegistry({ models: [{ slug: 'gpt-5.5' }, { slug: 'gpt-5.4' }] });
+    expect(result.map((m) => m.slug)).toEqual(['gpt-5.5', 'gpt-5.4']);
+  });
+
+  it('parses a bare array', () => {
+    const result = parseRegistry([{ slug: 'gpt-5.5' }, { slug: 'gpt-5.4' }]);
+    expect(result.map((m) => m.slug)).toEqual(['gpt-5.5', 'gpt-5.4']);
+  });
+
+  it('skips invalid entries inline', () => {
+    const result = parseRegistry({
+      models: [
+        { slug: 'gpt-5.5' },
+        null,
+        { slug: 'codex-auto-review', visibility: 'hide' },
+        { slug: 'gpt-5.3-codex-spark', supported_in_api: false },
+        { slug: 'gpt-5.4' },
+      ],
+    });
+    expect(result.map((m) => m.slug)).toEqual(['gpt-5.5', 'gpt-5.4']);
+  });
+
+  it.each([null, undefined, 42, 'foo', { data: [] }])('returns empty for unrecognized shape: %s', (data) => {
+    expect(parseRegistry(data)).toEqual([]);
   });
 });
