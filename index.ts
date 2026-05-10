@@ -182,9 +182,7 @@ const normalizeAuth = (raw: unknown): NormalizedAuth => {
   }
   const root = raw as Record<string, unknown>;
   const tokens =
-    typeof root.tokens === 'object' && root.tokens !== null
-      ? (root.tokens as Record<string, unknown>)
-      : undefined;
+    typeof root.tokens === 'object' && root.tokens !== null ? (root.tokens as Record<string, unknown>) : undefined;
 
   const accessToken =
     pickString(tokens, 'access_token', 'accessToken', 'token') ??
@@ -194,11 +192,9 @@ const normalizeAuth = (raw: unknown): NormalizedAuth => {
   }
 
   const refreshToken =
-    pickString(tokens, 'refresh_token', 'refreshToken') ??
-    pickString(root, 'refreshToken', 'refresh_token');
+    pickString(tokens, 'refresh_token', 'refreshToken') ?? pickString(root, 'refreshToken', 'refresh_token');
 
-  let accountId =
-    pickString(tokens, 'account_id', 'accountId') ?? pickString(root, 'accountId', 'account_id');
+  let accountId = pickString(tokens, 'account_id', 'accountId') ?? pickString(root, 'accountId', 'account_id');
   if (!accountId) {
     accountId = getAccountIdFromJwt(accessToken);
   }
@@ -225,14 +221,14 @@ const loadAuthFile = async (path: string): Promise<NormalizedAuth> => {
     data = await readFile(path, 'utf-8');
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    throw new Error(`Failed to read Codex auth file at ${path}: ${msg}`);
+    throw new Error(`Failed to read Codex auth file at ${path}: ${msg}`, { cause: err });
   }
   let parsed: unknown;
   try {
     parsed = JSON.parse(data);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    throw new Error(`Codex auth file at ${path} is not valid JSON: ${msg}`);
+    throw new Error(`Codex auth file at ${path} is not valid JSON: ${msg}`, { cause: err });
   }
   return normalizeAuth(parsed);
 };
@@ -256,10 +252,7 @@ const persistRefreshedTokens = async (
   } catch {
     // File may have been deleted between read and write; fall through.
   }
-  const priorTokens =
-    prior.tokens && typeof prior.tokens === 'object'
-      ? (prior.tokens as Record<string, unknown>)
-      : {};
+  const priorTokens = prior.tokens && typeof prior.tokens === 'object' ? (prior.tokens as Record<string, unknown>) : {};
   const next = {
     ...prior,
     auth_mode: typeof prior.auth_mode === 'string' ? prior.auth_mode : 'ChatGPT',
@@ -288,10 +281,7 @@ interface RefreshedTokens {
   expiresAt: number;
 }
 
-const refreshAccessToken = async (
-  refreshToken: string,
-  context: ExtensionContext,
-): Promise<RefreshedTokens> => {
+const refreshAccessToken = async (refreshToken: string, context: ExtensionContext): Promise<RefreshedTokens> => {
   context.log('Codex Auth: attempting non-interactive token refresh', 'info');
   const response = await fetch(TOKEN_URL, {
     method: 'POST',
@@ -324,14 +314,11 @@ const refreshAccessToken = async (
 
 // --- Get valid access token (no interactive fallback) ---
 
-const getValidAccessToken = async (
-  context: ExtensionContext,
-): Promise<{ accessToken: string; accountId: string }> => {
+const getValidAccessToken = async (context: ExtensionContext): Promise<{ accessToken: string; accountId: string }> => {
   const resolved = await resolveAuthPath();
   const auth = await loadAuthFile(resolved.path);
 
-  const expired =
-    auth.expiresAt !== null && Date.now() >= auth.expiresAt - EXPIRY_BUFFER_MS;
+  const expired = auth.expiresAt !== null && Date.now() >= auth.expiresAt - EXPIRY_BUFFER_MS;
 
   if (!expired) {
     const accountId = auth.accountId ?? getAccountIdFromJwt(auth.accessToken);
@@ -356,6 +343,7 @@ const getValidAccessToken = async (
     const msg = err instanceof Error ? err.message : String(err);
     throw new Error(
       `Codex access token at ${resolved.path} is expired and refresh failed: ${msg}. Re-authenticate externally (e.g. \`codex login\`) and retry.`,
+      { cause: err },
     );
   }
 
@@ -363,11 +351,7 @@ const getValidAccessToken = async (
   if (!accountId) {
     throw new Error('Failed to extract account ID from refreshed Codex token');
   }
-  await persistRefreshedTokens(
-    resolved.path,
-    { ...refreshed, accountId },
-    context,
-  );
+  await persistRefreshedTokens(resolved.path, { ...refreshed, accountId }, context);
   return { accessToken: refreshed.accessToken, accountId };
 };
 
