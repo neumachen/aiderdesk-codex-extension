@@ -31,11 +31,14 @@ const EXPIRY_BUFFER_MS = 60_000;
 // stall every queued LLM call indefinitely.
 const REFRESH_TIMEOUT_MS = 15_000;
 
-// Responses API `store` flag. Defaults to true so the AI SDK's
-// item_reference replay path works for tool results across turns. Flip via
-// CODEX_STORE=false (or 0) if the Codex backend rejects stored responses.
 const isEnvFalsy = (v: string | undefined): boolean => v === 'false' || v === '0';
-const isStoreEnabled = (): boolean => !isEnvFalsy(process.env.CODEX_STORE);
+const isEnvTruthy = (v: string | undefined): boolean => v === 'true' || v === '1';
+
+// Responses API `store` flag. Defaults to false because the Codex backend
+// rejects stored responses for some accounts; opt in via CODEX_STORE=true
+// (or 1) when the AI SDK's item_reference replay path is needed for
+// multi-turn tool flows.
+const isStoreEnabled = (): boolean => isEnvTruthy(process.env.CODEX_STORE);
 
 // Reasoning tier names the Codex backend exposes via the
 // supported_reasoning_levels[].effort field. Tiers it advertises that aren't

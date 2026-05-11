@@ -94,7 +94,7 @@ describe('AiderDeskCodexExtension', () => {
       if (!provider) throw new Error('expected at least one provider');
 
       const opts = provider.strategy.getProviderOptions?.({ id: 'gpt-5.5-xhigh' } as never);
-      expect(opts?.openai).toMatchObject({ store: true, reasoningEffort: 'xhigh' });
+      expect(opts?.openai).toMatchObject({ store: false, reasoningEffort: 'xhigh' });
 
       const lowOpts = provider.strategy.getProviderOptions?.({ id: 'gpt-5.4-low' } as never);
       expect(lowOpts?.openai).toMatchObject({ reasoningEffort: 'low' });
@@ -114,28 +114,28 @@ describe('AiderDeskCodexExtension', () => {
         vi.unstubAllEnvs();
       });
 
-      it('defaults store to true when unset', () => {
+      it('defaults store to false when unset', () => {
         vi.stubEnv('CODEX_STORE', '');
-        const ext = new AiderDeskCodexExtension();
-        const [provider] = ext.getProviders(stubContext);
-        const opts = provider?.strategy.getProviderOptions?.({ id: 'gpt-5.5-medium' } as never);
-        expect(opts?.openai).toMatchObject({ store: true });
-      });
-
-      it.each(['false', '0'])('honors CODEX_STORE=%s by setting store to false', (value) => {
-        vi.stubEnv('CODEX_STORE', value);
         const ext = new AiderDeskCodexExtension();
         const [provider] = ext.getProviders(stubContext);
         const opts = provider?.strategy.getProviderOptions?.({ id: 'gpt-5.5-medium' } as never);
         expect(opts?.openai).toMatchObject({ store: false });
       });
 
-      it('treats other values as truthy', () => {
-        vi.stubEnv('CODEX_STORE', 'true');
+      it.each(['true', '1'])('honors CODEX_STORE=%s by setting store to true', (value) => {
+        vi.stubEnv('CODEX_STORE', value);
         const ext = new AiderDeskCodexExtension();
         const [provider] = ext.getProviders(stubContext);
         const opts = provider?.strategy.getProviderOptions?.({ id: 'gpt-5.5-medium' } as never);
         expect(opts?.openai).toMatchObject({ store: true });
+      });
+
+      it('treats other values as falsy', () => {
+        vi.stubEnv('CODEX_STORE', 'false');
+        const ext = new AiderDeskCodexExtension();
+        const [provider] = ext.getProviders(stubContext);
+        const opts = provider?.strategy.getProviderOptions?.({ id: 'gpt-5.5-medium' } as never);
+        expect(opts?.openai).toMatchObject({ store: false });
       });
     });
   });

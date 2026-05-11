@@ -37,7 +37,7 @@ If none exist, the extension throws an error listing all candidates.
 | `CODEX_AUTH_FILE`            | Absolute path to the auth JSON file. Highest precedence.                                                                                                                                                             |
 | `CODEX_HOME`                 | If set, `${CODEX_HOME}/auth.json` is used.                                                                                                                                                                           |
 | `CODEX_AUTH_PERSIST`         | Set to `false` or `0` to disable writeback after a successful refresh. Default: write back.                                                                                                                          |
-| `CODEX_STORE`                | Set to `false` or `0` to call the Responses API with `store: false`. Default: `store: true` so multi-turn tool flows replay correctly via `item_reference`. Flip back if the Codex backend rejects stored responses. |
+| `CODEX_STORE`                | Set to `true` or `1` to call the Responses API with `store: true`. Default: `store: false` because the Codex backend rejects stored responses for some accounts. Flip on if you need multi-turn tool flows to replay via `item_reference`. |
 | `CODEX_FALLBACK_MODELS_ONLY` | Set to a truthy value to skip the live `/models` fetch and `models_cache.json` lookup, using the hardcoded fallback model list only. Useful for air-gapped runs and test determinism.                                |
 
 ## Supported auth file shapes
@@ -141,9 +141,9 @@ Each base model is exposed at the reasoning tiers it supports, so the picker sho
 | `high`   | Greater reasoning depth for complex problems        |
 | `xhigh`  | Extra-high reasoning depth for the hardest problems |
 
-## Responses API state (`store: true`)
+## Responses API state (`store: false`)
 
-The extension calls the OpenAI Responses API with `store: true` so that tool results from previous turns can be replayed via `item_reference` IDs. With `store: false`, the AI SDK silently drops tool results between turns (it warns: `Results for OpenAI tool ... are not sent to the API when store is false`), which would break multi-step tool flows. If you observe Codex-backend rejections of `store: true`, set `CODEX_STORE=false` to flip it back without rebuilding the extension.
+The extension calls the OpenAI Responses API with `store: false` by default because the Codex backend rejects stored responses for some accounts. The tradeoff is that the AI SDK silently drops tool results between turns when `store: false` (it warns: `Results for OpenAI tool ... are not sent to the API when store is false`), which breaks multi-step tool flows that depend on `item_reference` replay. Set `CODEX_STORE=true` to opt back in without rebuilding the extension.
 
 ## Troubleshooting
 
