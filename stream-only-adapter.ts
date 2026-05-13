@@ -1,5 +1,6 @@
 import type {
   LanguageModelV2,
+  LanguageModelV2CallOptions,
   LanguageModelV2CallWarning,
   LanguageModelV2Content,
   LanguageModelV2FinishReason,
@@ -15,15 +16,30 @@ import type {
 // which would otherwise fail on every handoff. This wrapper makes any
 // `doGenerate` call internally drive `doStream` and assemble a non-streaming
 // result, so callers never see the protocol mismatch.
+//
+// The same backend also rejects some parameters the @ai-sdk/openai Responses
+// provider sends by default. We strip those here so the inner model never
+// forwards them. Add fields to `sanitizeForCodex` as the backend surfaces new
+// `Unsupported parameter: <name>` rejections.
+
+// Codex backend rejects `max_output_tokens` with
+// `{"detail":"Unsupported parameter: max_output_tokens"}` even though the
+// standard OpenAI Responses API accepts it. AiderDesk sets `maxOutputTokens`
+// during handoff (and some streaming flows), so it must be cleared before the
+// call reaches the inner OpenAI Responses provider.
+const sanitizeForCodex = (options: LanguageModelV2CallOptions): LanguageModelV2CallOptions => ({
+  ...options,
+  maxOutputTokens: undefined,
+});
 
 export const wrapStreamOnly = (model: LanguageModelV2): LanguageModelV2 => ({
   specificationVersion: 'v2',
   provider: model.provider,
   modelId: model.modelId,
   supportedUrls: model.supportedUrls,
-  doStream: (options) => model.doStream(options),
+  doStream: (options) => model.doStream(sanitizeForCodex(options)),
   doGenerate: async (options) => {
-    const { stream, request, response: streamResponse } = await model.doStream(options);
+    const { stream, request, response: streamResponse } = await model.doStream(sanitizeForCodex(options));
 
     // Streamed text and reasoning arrive as start/delta*/end triples keyed by
     // id. We keep one mutable Content entry per id and append deltas in-place

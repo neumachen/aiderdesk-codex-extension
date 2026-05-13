@@ -114,14 +114,59 @@ describe('wrapStreamOnly', () => {
     expect(result.finishReason).toBe('tool-calls');
   });
 
-  it('passes doStream through unchanged so streamText keeps its native streaming path', async () => {
+  it('passes doStream through to the inner model so streamText keeps its native streaming path', async () => {
     const inner = mkModel([]);
     const wrapped = wrapStreamOnly(inner);
 
     const opts = { foo: 'bar' } as unknown as LanguageModelV2CallOptions;
     await wrapped.doStream(opts);
 
-    expect(inner.doStream).toHaveBeenCalledWith(opts);
+    expect(inner.doStream).toHaveBeenCalledTimes(1);
+    expect(inner.doStream).toHaveBeenCalledWith(expect.objectContaining({ foo: 'bar' }));
+  });
+
+  it('strips maxOutputTokens before calling doStream (Codex rejects it as Unsupported parameter)', async () => {
+    const inner = mkModel([]);
+    const wrapped = wrapStreamOnly(inner);
+
+    const opts = { prompt: [], maxOutputTokens: 128000 } as unknown as LanguageModelV2CallOptions;
+    await wrapped.doStream(opts);
+
+    const forwarded = (inner.doStream as ReturnType<typeof vi.fn>).mock.calls[0]?.[0];
+    expect(forwarded.maxOutputTokens).toBeUndefined();
+  });
+
+  it('strips maxOutputTokens on the doGenerate path too', async () => {
+    const inner = mkModel([
+      { type: 'stream-start', warnings: [] },
+      { type: 'text-start', id: 't1' },
+      { type: 'text-delta', id: 't1', delta: 'ok' },
+      { type: 'text-end', id: 't1' },
+      {
+        type: 'finish',
+        finishReason: 'stop',
+        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+      },
+    ]);
+    const wrapped = wrapStreamOnly(inner);
+
+    const opts = { prompt: [], maxOutputTokens: 128000 } as unknown as LanguageModelV2CallOptions;
+    await wrapped.doGenerate(opts);
+
+    const forwarded = (inner.doStream as ReturnType<typeof vi.fn>).mock.calls[0]?.[0];
+    expect(forwarded.maxOutputTokens).toBeUndefined();
+  });
+
+  it('does not mutate the caller-supplied options object', async () => {
+    const inner = mkModel([]);
+    const wrapped = wrapStreamOnly(inner);
+
+    const opts = { prompt: [], maxOutputTokens: 128000 } as unknown as LanguageModelV2CallOptions & {
+      maxOutputTokens: number;
+    };
+    await wrapped.doStream(opts);
+
+    expect(opts.maxOutputTokens).toBe(128000);
   });
 
   it('throws when the stream emits an error part', async () => {
