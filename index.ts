@@ -14,6 +14,8 @@ import type {
   AgentStartedEvent,
 } from '@aiderdesk/extensions';
 
+import { wrapStreamOnly } from './stream-only-adapter';
+
 // --- Constants ---
 
 // Refresh-only OAuth client id (the official Codex CLI value, base64-encoded
@@ -646,7 +648,11 @@ export default class AiderDeskCodexExtension implements Extension {
         apiKey: accessToken,
         headers: codexHeaders(accountId),
       });
-      return provider.responses(slug);
+      // The Codex backend rejects non-streaming `/responses` requests with
+      // `{"detail":"Stream must be set to true"}`. AiderDesk's handoff flow
+      // uses generateText (non-streaming), so route doGenerate through
+      // doStream and accumulate the result.
+      return wrapStreamOnly(provider.responses(slug));
     };
 
     const loadModels = async (profile: ProviderProfile): Promise<LoadModelsResponse> => {
