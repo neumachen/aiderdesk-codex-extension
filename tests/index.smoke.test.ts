@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { AgentStartedEvent, ExtensionContext, ProviderProfile, SettingsData } from '@aiderdesk/extensions';
 
-import AiderDeskCodexExtension, { parseRegistry, parseRegistryEntry } from '../index';
+import AiderDeskCodexExtension, { advertisedInputBudget, parseRegistry, parseRegistryEntry } from '../index';
 
 const stubContext = { log: () => {} } as unknown as ExtensionContext;
 
@@ -84,6 +84,38 @@ describe('AiderDeskCodexExtension', () => {
       }
 
       expect(result.models?.every((m) => m.providerId === 'test-profile')).toBe(true);
+    });
+
+    it('advertises a buffered maxInputTokens (contextWindow - output - headroom), not the raw window', async () => {
+      const ext = new AiderDeskCodexExtension();
+      const [provider] = ext.getProviders(stubContext);
+      if (!provider) throw new Error('expected at least one provider');
+
+      const profile = { id: 'test-profile' } as unknown as ProviderProfile;
+      const settings = {} as unknown as SettingsData;
+
+      const result = await provider.strategy.loadModels(profile, settings);
+
+      // Fallback models all use DEFAULT_CONTEXT_WINDOW (200_000); the advertised
+      // budget must reserve room for the worst-case output + headroom.
+      const expected = advertisedInputBudget(200000);
+      expect(result.models?.every((m) => m.maxInputTokens === expected)).toBe(true);
+      expect(result.models?.every((m) => (m.maxInputTokens ?? 0) < 200000)).toBe(true);
+    });
+  });
+
+  describe('advertisedInputBudget', () => {
+    it('subtracts output budget and safety headroom from the context window', () => {
+      // 272_000 − 128_000 (DEFAULT_MAX_OUTPUT_TOKENS) − 8_192 (headroom)
+      expect(advertisedInputBudget(272000)).toBe(135808);
+      // 200_000 − 128_000 − 8_192
+      expect(advertisedInputBudget(200000)).toBe(63808);
+    });
+
+    it('floors at 1024 so a misconfigured tiny window never goes negative', () => {
+      expect(advertisedInputBudget(8000)).toBe(1024);
+      expect(advertisedInputBudget(100)).toBe(1024);
+      expect(advertisedInputBudget(0)).toBe(1024);
     });
   });
 
@@ -264,9 +296,9 @@ describe('parseRegistryEntry', () => {
   });
 
   it('falls back to default context window for missing or invalid values', () => {
-    expect(parseRegistryEntry({ slug: 'gpt-5.5' })?.contextWindow).toBe(272000);
-    expect(parseRegistryEntry({ slug: 'gpt-5.5', context_window: 0 })?.contextWindow).toBe(272000);
-    expect(parseRegistryEntry({ slug: 'gpt-5.5', context_window: 'huge' })?.contextWindow).toBe(272000);
+    expect(parseRegistryEntry({ slug: 'gpt-5.5' })?.contextWindow).toBe(200000);
+    expect(parseRegistryEntry({ slug: 'gpt-5.5', context_window: 0 })?.contextWindow).toBe(200000);
+    expect(parseRegistryEntry({ slug: 'gpt-5.5', context_window: 'huge' })?.contextWindow).toBe(200000);
   });
 
   it.each([null, undefined, 'string', 42, true, {}, { slug: '' }, { slug: 123 }])(

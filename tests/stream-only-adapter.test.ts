@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { LanguageModelV2, LanguageModelV2CallOptions, LanguageModelV2StreamPart } from '@ai-sdk/provider';
 
-import { wrapStreamOnly } from '../stream-only-adapter';
+import { formatStreamError, wrapStreamOnly } from '../stream-only-adapter';
 
 const stubCallOptions: LanguageModelV2CallOptions = {
   prompt: [],
@@ -234,5 +234,114 @@ describe('wrapStreamOnly', () => {
     const result = await wrapStreamOnly(inner).doGenerate(stubCallOptions);
 
     expect(result.content).toEqual([{ type: 'text', text: 'ab', providerMetadata: undefined }]);
+  });
+
+  it('formats Codex inner error shape with code, message, param, and model id', async () => {
+    const codexErr = {
+      type: 'invalid_request_error',
+      code: 'context_length_exceeded',
+      message: 'Your input exceeds the context window of this model.',
+      param: 'input',
+    };
+    const inner = mkModel([
+      { type: 'stream-start', warnings: [] },
+      { type: 'error', error: codexErr },
+    ]);
+
+    await expect(wrapStreamOnly(inner).doGenerate(stubCallOptions)).rejects.toMatchObject({
+      message: expect.stringMatching(/Codex API error \(context_length_exceeded\).*model=gpt-5\.5.*param=input/),
+      cause: codexErr,
+    });
+  });
+
+  it('unwraps the {error: {...}} envelope shape that wire-format error chunks carry', async () => {
+    const payload = {
+      type: 'error',
+      sequence_number: 2,
+      error: {
+        type: 'invalid_request_error',
+        code: 'context_length_exceeded',
+        message: 'Your input exceeds the context window of this model.',
+        param: 'input',
+      },
+    };
+    const inner = mkModel([
+      { type: 'stream-start', warnings: [] },
+      { type: 'error', error: payload },
+    ]);
+
+    await expect(wrapStreamOnly(inner).doGenerate(stubCallOptions)).rejects.toThrow(
+      /Codex API error \(context_length_exceeded\).*model=gpt-5\.5.*param=input/,
+    );
+  });
+
+  it('parses JSON-encoded string error payloads', async () => {
+    const json = JSON.stringify({
+      error: { code: 'context_length_exceeded', message: 'too big', param: 'input' },
+    });
+    const inner = mkModel([
+      { type: 'stream-start', warnings: [] },
+      { type: 'error', error: json },
+    ]);
+
+    await expect(wrapStreamOnly(inner).doGenerate(stubCallOptions)).rejects.toThrow(
+      'Codex API error (context_length_exceeded): too big',
+    );
+  });
+
+  it('appends a hint for context_length_exceeded so users know to compact', async () => {
+    const inner = mkModel([
+      { type: 'stream-start', warnings: [] },
+      {
+        type: 'error',
+        error: { code: 'context_length_exceeded', message: 'too big' },
+      },
+    ]);
+
+    await expect(wrapStreamOnly(inner).doGenerate(stubCallOptions)).rejects.toThrow(/needs compaction or handoff/);
+  });
+
+  it('falls back to JSON.stringify for unrecognised error shapes', async () => {
+    const weird = { weird: true, n: 1 };
+    const inner = mkModel([
+      { type: 'stream-start', warnings: [] },
+      { type: 'error', error: weird },
+    ]);
+
+    await expect(wrapStreamOnly(inner).doGenerate(stubCallOptions)).rejects.toMatchObject({
+      message: JSON.stringify(weird),
+      cause: weird,
+    });
+  });
+});
+
+describe('formatStreamError', () => {
+  it('returns the original Error when its message is plain text', () => {
+    const original = new Error('plain message');
+    expect(formatStreamError(original, 'gpt-5.5')).toBe(original);
+  });
+
+  it('enriches an Error whose message is a JSON-encoded Codex payload', () => {
+    const original = new Error(JSON.stringify({ code: 'rate_limited', message: 'slow down' }));
+    const formatted = formatStreamError(original, 'gpt-5.5');
+    expect(formatted).not.toBe(original);
+    expect(formatted.message).toContain('Codex API error (rate_limited): slow down');
+    expect(formatted.message).toContain('model=gpt-5.5');
+    expect(formatted.cause).toBe(original);
+  });
+
+  it('produces a readable message for the bare inner Codex shape', () => {
+    const formatted = formatStreamError(
+      { code: 'context_length_exceeded', message: 'too big', param: 'input' },
+      'gpt-5.5',
+    );
+    expect(formatted.message).toBe(
+      "Codex API error (context_length_exceeded): too big advertised maxInputTokens may exceed the model's effective context; the conversation likely needs compaction or handoff [model=gpt-5.5, param=input]",
+    );
+  });
+
+  it('uses error.type when no code is present', () => {
+    const formatted = formatStreamError({ type: 'invalid_request_error', message: 'bad input' }, 'gpt-5.5');
+    expect(formatted.message).toContain('Codex API error (invalid_request_error)');
   });
 });

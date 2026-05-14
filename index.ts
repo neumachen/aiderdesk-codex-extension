@@ -49,8 +49,25 @@ const isStoreEnabled = (): boolean => isEnvTruthy(process.env.CODEX_STORE);
 type ReasoningTier = 'low' | 'medium' | 'high' | 'xhigh';
 const REASONING_TIERS: readonly ReasoningTier[] = ['low', 'medium', 'high', 'xhigh'];
 
-const DEFAULT_CONTEXT_WINDOW = 272000;
+// Conservative fallback used only when both the /models endpoint and the
+// on-disk models_cache.json are unreachable. Real models advertise their
+// actual context_window via /models; we'd rather underestimate here than
+// overestimate, because overestimating means AiderDesk fails to compact
+// before the Codex backend rejects the request with context_length_exceeded.
+const DEFAULT_CONTEXT_WINDOW = 200000;
 const DEFAULT_MAX_OUTPUT_TOKENS = 128000;
+// Reserved for reasoning summaries, system instructions, schema overhead,
+// and tokenizer drift. Subtracted from contextWindow when computing the
+// input budget advertised to AiderDesk so the input+output+reasoning sum
+// stays under the model's real context limit.
+const CONTEXT_WINDOW_SAFETY_HEADROOM = 8192;
+
+// The Codex backend counts the full input + output + reasoning total against
+// context_window. AiderDesk uses maxInputTokens as the budget for the input
+// side alone, so we reserve room for the worst-case output we might emit and
+// a small headroom for system instructions and tokenizer drift.
+export const advertisedInputBudget = (contextWindow: number): number =>
+  Math.max(1024, contextWindow - DEFAULT_MAX_OUTPUT_TOKENS - CONTEXT_WINDOW_SAFETY_HEADROOM);
 
 // Each tier suffix yields a separate AiderDesk model entry. The suffix drives
 // reasoning.effort per-call via getProviderOptions; the slug (without suffix)
@@ -661,7 +678,7 @@ export default class AiderDeskCodexExtension implements Extension {
         reasoningTiers.map((tier) => ({
           id: `${slug}-${tier}`,
           providerId: profile.id,
-          maxInputTokens: contextWindow,
+          maxInputTokens: advertisedInputBudget(contextWindow),
           maxOutputTokensLimit: DEFAULT_MAX_OUTPUT_TOKENS,
         })),
       );

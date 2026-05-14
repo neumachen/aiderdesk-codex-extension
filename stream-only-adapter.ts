@@ -32,6 +32,89 @@ const sanitizeForCodex = (options: LanguageModelV2CallOptions): LanguageModelV2C
   maxOutputTokens: undefined,
 });
 
+// Codex error chunks arrive in two shapes that both need to read clearly to
+// users: the inner `{message, code?, type?, param?}` the OpenAI adapter
+// actually enqueues, and the wire-format envelope `{error: {...}}` that
+// downstream loggers sometimes re-stringify back into view. Anything we don't
+// recognise still falls through to JSON.stringify so no information is lost.
+
+interface ParsedCodexError {
+  message: string;
+  code?: string;
+  type?: string;
+  param?: string;
+}
+
+const KNOWN_CODE_HINTS: Record<string, string> = {
+  context_length_exceeded:
+    "advertised maxInputTokens may exceed the model's effective context; the conversation likely needs compaction or handoff",
+};
+
+const tryParseJson = (s: string): unknown => {
+  try {
+    return JSON.parse(s);
+  } catch {
+    return undefined;
+  }
+};
+
+const extractCodexError = (raw: unknown): ParsedCodexError | null => {
+  if (raw == null) return null;
+
+  if (typeof raw === 'string') {
+    const parsed = tryParseJson(raw);
+    if (parsed !== undefined && parsed !== raw) {
+      const inner = extractCodexError(parsed);
+      if (inner) return inner;
+    }
+    return { message: raw };
+  }
+
+  if (typeof raw !== 'object') return null;
+  const obj = raw as Record<string, unknown>;
+
+  if (obj.error && typeof obj.error === 'object') {
+    const inner = extractCodexError(obj.error);
+    if (inner) return inner;
+  }
+
+  if (typeof obj.message === 'string') {
+    return {
+      message: obj.message,
+      code: typeof obj.code === 'string' ? obj.code : undefined,
+      type: typeof obj.type === 'string' ? obj.type : undefined,
+      param: typeof obj.param === 'string' ? obj.param : undefined,
+    };
+  }
+
+  return null;
+};
+
+const buildMessage = (p: ParsedCodexError, modelId: string): string => {
+  const prefix = p.code ? `Codex API error (${p.code})` : p.type ? `Codex API error (${p.type})` : 'Codex API error';
+  const ctx: string[] = [`model=${modelId}`];
+  if (p.param) ctx.push(`param=${p.param}`);
+  const hint = p.code && KNOWN_CODE_HINTS[p.code] ? ` ${KNOWN_CODE_HINTS[p.code]}` : '';
+  return `${prefix}: ${p.message}${hint} [${ctx.join(', ')}]`;
+};
+
+export const formatStreamError = (raw: unknown, modelId: string): Error => {
+  if (raw instanceof Error) {
+    const parsed = extractCodexError(raw.message);
+    if (parsed && parsed.message !== raw.message) {
+      return new Error(buildMessage(parsed, modelId), { cause: raw });
+    }
+    return raw;
+  }
+
+  const parsed = extractCodexError(raw);
+  if (parsed) {
+    return new Error(buildMessage(parsed, modelId), { cause: raw });
+  }
+
+  return new Error(typeof raw === 'string' ? raw : JSON.stringify(raw), { cause: raw });
+};
+
 export const wrapStreamOnly = (model: LanguageModelV2): LanguageModelV2 => ({
   specificationVersion: 'v2',
   provider: model.provider,
@@ -152,8 +235,7 @@ export const wrapStreamOnly = (model: LanguageModelV2): LanguageModelV2 => ({
             break;
 
           case 'error': {
-            const err = value.error;
-            throw err instanceof Error ? err : new Error(typeof err === 'string' ? err : JSON.stringify(err));
+            throw formatStreamError(value.error, model.modelId);
           }
 
           case 'tool-input-start':
