@@ -27,7 +27,7 @@ describe('AiderDeskCodexExtension', () => {
     it('matches the expected name, version, and author', () => {
       expect(AiderDeskCodexExtension.metadata).toMatchObject({
         name: 'AiderDesk Codex Extension',
-        version: '1.1.1',
+        version: '1.2.0',
         author: 'Kareem Hepburn',
       });
     });
