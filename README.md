@@ -32,13 +32,13 @@ If none exist, the extension throws an error listing all candidates.
 
 ## Environment variables
 
-| Variable                     | Purpose                                                                                                                                                                                                              |
-| ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `CODEX_AUTH_FILE`            | Absolute path to the auth JSON file. Highest precedence.                                                                                                                                                             |
-| `CODEX_HOME`                 | If set, `${CODEX_HOME}/auth.json` is used.                                                                                                                                                                           |
-| `CODEX_AUTH_PERSIST`         | Set to `false` or `0` to disable writeback after a successful refresh. Default: write back.                                                                                                                          |
+| Variable                     | Purpose                                                                                                                                                                                                                                    |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `CODEX_AUTH_FILE`            | Absolute path to the auth JSON file. Highest precedence.                                                                                                                                                                                   |
+| `CODEX_HOME`                 | If set, `${CODEX_HOME}/auth.json` is used.                                                                                                                                                                                                 |
+| `CODEX_AUTH_PERSIST`         | Set to `false` or `0` to disable writeback after a successful refresh. Default: write back.                                                                                                                                                |
 | `CODEX_STORE`                | Set to `true` or `1` to call the Responses API with `store: true`. Default: `store: false` because the Codex backend rejects stored responses for some accounts. Flip on if you need multi-turn tool flows to replay via `item_reference`. |
-| `CODEX_FALLBACK_MODELS_ONLY` | Set to a truthy value to skip the live `/models` fetch and `models_cache.json` lookup, using the hardcoded fallback model list only. Useful for air-gapped runs and test determinism.                                |
+| `CODEX_FALLBACK_MODELS_ONLY` | Set to a truthy value to skip the live `/models` fetch and `models_cache.json` lookup, using the hardcoded fallback model list only. Useful for air-gapped runs and test determinism.                                                      |
 
 ## Supported auth file shapes
 
