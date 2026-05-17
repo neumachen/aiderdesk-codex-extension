@@ -96,11 +96,11 @@ describe('AiderDeskCodexExtension', () => {
 
       const result = await provider.strategy.loadModels(profile, settings);
 
-      // Fallback models all use DEFAULT_CONTEXT_WINDOW (200_000); the advertised
+      // Fallback models all use DEFAULT_CONTEXT_WINDOW (272_000); the advertised
       // budget must reserve room for the worst-case output + headroom.
-      const expected = advertisedInputBudget(200000);
+      const expected = advertisedInputBudget(272000);
       expect(result.models?.every((m) => m.maxInputTokens === expected)).toBe(true);
-      expect(result.models?.every((m) => (m.maxInputTokens ?? 0) < 200000)).toBe(true);
+      expect(result.models?.every((m) => (m.maxInputTokens ?? 0) < 272000)).toBe(true);
     });
   });
 
@@ -108,8 +108,6 @@ describe('AiderDeskCodexExtension', () => {
     it('subtracts output budget and safety headroom from the context window', () => {
       // 272_000 − 128_000 (DEFAULT_MAX_OUTPUT_TOKENS) − 8_192 (headroom)
       expect(advertisedInputBudget(272000)).toBe(135808);
-      // 200_000 − 128_000 − 8_192
-      expect(advertisedInputBudget(200000)).toBe(63808);
     });
 
     it('floors at 1024 so a misconfigured tiny window never goes negative', () => {
@@ -296,9 +294,9 @@ describe('parseRegistryEntry', () => {
   });
 
   it('falls back to default context window for missing or invalid values', () => {
-    expect(parseRegistryEntry({ slug: 'gpt-5.5' })?.contextWindow).toBe(200000);
-    expect(parseRegistryEntry({ slug: 'gpt-5.5', context_window: 0 })?.contextWindow).toBe(200000);
-    expect(parseRegistryEntry({ slug: 'gpt-5.5', context_window: 'huge' })?.contextWindow).toBe(200000);
+    expect(parseRegistryEntry({ slug: 'gpt-5.5' })?.contextWindow).toBe(272000);
+    expect(parseRegistryEntry({ slug: 'gpt-5.5', context_window: 0 })?.contextWindow).toBe(272000);
+    expect(parseRegistryEntry({ slug: 'gpt-5.5', context_window: 'huge' })?.contextWindow).toBe(272000);
   });
 
   it.each([null, undefined, 'string', 42, true, {}, { slug: '' }, { slug: 123 }])(

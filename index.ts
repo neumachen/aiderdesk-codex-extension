@@ -49,12 +49,15 @@ const isStoreEnabled = (): boolean => isEnvTruthy(process.env.CODEX_STORE);
 type ReasoningTier = 'low' | 'medium' | 'high' | 'xhigh';
 const REASONING_TIERS: readonly ReasoningTier[] = ['low', 'medium', 'high', 'xhigh'];
 
-// Conservative fallback used only when both the /models endpoint and the
-// on-disk models_cache.json are unreachable. Real models advertise their
-// actual context_window via /models; we'd rather underestimate here than
-// overestimate, because overestimating means AiderDesk fails to compact
-// before the Codex backend rejects the request with context_length_exceeded.
-const DEFAULT_CONTEXT_WINDOW = 200000;
+// Fallback used only when both the /models endpoint and the on-disk
+// models_cache.json are unreachable. Matches the per-slug context_window
+// the live Codex /models registry currently advertises for every visible
+// gpt-5.x slug (gpt-5.2, gpt-5.3-codex, gpt-5.4, gpt-5.4-mini, gpt-5.5) —
+// it's a per-slug value, not per-reasoning-tier, so all of low/medium/
+// high/xhigh share the same window. If a future slug ships with a smaller
+// window AND both the live fetch and cache file fail, this could
+// overestimate; that combined-failure path is the tradeoff.
+const DEFAULT_CONTEXT_WINDOW = 272000;
 const DEFAULT_MAX_OUTPUT_TOKENS = 128000;
 // Reserved for reasoning summaries, system instructions, schema overhead,
 // and tokenizer drift. Subtracted from contextWindow when computing the
