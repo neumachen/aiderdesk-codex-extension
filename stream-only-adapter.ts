@@ -1,13 +1,13 @@
 import type {
-  LanguageModelV2,
-  LanguageModelV2CallOptions,
-  LanguageModelV2CallWarning,
-  LanguageModelV2Content,
-  LanguageModelV2FinishReason,
-  LanguageModelV2ResponseMetadata,
-  LanguageModelV2Usage,
-  SharedV2Headers,
-  SharedV2ProviderMetadata,
+  LanguageModelV3,
+  LanguageModelV3CallOptions,
+  LanguageModelV3Content,
+  LanguageModelV3FinishReason,
+  LanguageModelV3ResponseMetadata,
+  LanguageModelV3Usage,
+  SharedV3Headers,
+  SharedV3ProviderMetadata,
+  SharedV3Warning,
 } from '@ai-sdk/provider';
 
 // The ChatGPT-backed Codex `/responses` endpoint rejects non-streaming requests
@@ -27,7 +27,7 @@ import type {
 // standard OpenAI Responses API accepts it. AiderDesk sets `maxOutputTokens`
 // during handoff (and some streaming flows), so it must be cleared before the
 // call reaches the inner OpenAI Responses provider.
-const sanitizeForCodex = (options: LanguageModelV2CallOptions): LanguageModelV2CallOptions => ({
+const sanitizeForCodex = (options: LanguageModelV3CallOptions): LanguageModelV3CallOptions => ({
   ...options,
   maxOutputTokens: undefined,
 });
@@ -115,8 +115,8 @@ export const formatStreamError = (raw: unknown, modelId: string): Error => {
   return new Error(typeof raw === 'string' ? raw : JSON.stringify(raw), { cause: raw });
 };
 
-export const wrapStreamOnly = (model: LanguageModelV2): LanguageModelV2 => ({
-  specificationVersion: 'v2',
+export const wrapStreamOnly = (model: LanguageModelV3): LanguageModelV3 => ({
+  specificationVersion: 'v3',
   provider: model.provider,
   modelId: model.modelId,
   supportedUrls: model.supportedUrls,
@@ -127,20 +127,21 @@ export const wrapStreamOnly = (model: LanguageModelV2): LanguageModelV2 => ({
     // Streamed text and reasoning arrive as start/delta*/end triples keyed by
     // id. We keep one mutable Content entry per id and append deltas in-place
     // so the final ordering matches the order the model emitted parts in.
-    const content: LanguageModelV2Content[] = [];
+    const content: LanguageModelV3Content[] = [];
     const textIndexById = new Map<string, number>();
     const reasoningIndexById = new Map<string, number>();
 
-    let finishReason: LanguageModelV2FinishReason = 'unknown';
-    let usage: LanguageModelV2Usage = {
-      inputTokens: undefined,
-      outputTokens: undefined,
-      totalTokens: undefined,
+    // 'other' is the safest default for the V3 unified finish reason if no
+    // 'finish' chunk arrives (V3 dropped V2's 'unknown' value).
+    let finishReason: LanguageModelV3FinishReason = { unified: 'other', raw: undefined };
+    let usage: LanguageModelV3Usage = {
+      inputTokens: { total: undefined, noCache: undefined, cacheRead: undefined, cacheWrite: undefined },
+      outputTokens: { total: undefined, text: undefined, reasoning: undefined },
     };
-    let providerMetadata: SharedV2ProviderMetadata | undefined;
-    let warnings: LanguageModelV2CallWarning[] = [];
-    const responseMetadata: LanguageModelV2ResponseMetadata & {
-      headers?: SharedV2Headers;
+    let providerMetadata: SharedV3ProviderMetadata | undefined;
+    let warnings: SharedV3Warning[] = [];
+    const responseMetadata: LanguageModelV3ResponseMetadata & {
+      headers?: SharedV3Headers;
       body?: unknown;
     } = {};
     if (streamResponse?.headers) responseMetadata.headers = streamResponse.headers;
@@ -178,7 +179,7 @@ export const wrapStreamOnly = (model: LanguageModelV2): LanguageModelV2 => ({
               textIndexById.set(value.id, idx);
               content.push({ type: 'text', text: '', providerMetadata: value.providerMetadata });
             }
-            const entry = content[idx] as LanguageModelV2Content & { type: 'text' };
+            const entry = content[idx] as LanguageModelV3Content & { type: 'text' };
             entry.text += value.delta;
             break;
           }
@@ -186,7 +187,7 @@ export const wrapStreamOnly = (model: LanguageModelV2): LanguageModelV2 => ({
           case 'text-end': {
             const idx = textIndexById.get(value.id);
             if (idx !== undefined && value.providerMetadata) {
-              const entry = content[idx] as LanguageModelV2Content & { type: 'text' };
+              const entry = content[idx] as LanguageModelV3Content & { type: 'text' };
               entry.providerMetadata = value.providerMetadata;
             }
             break;
@@ -207,7 +208,7 @@ export const wrapStreamOnly = (model: LanguageModelV2): LanguageModelV2 => ({
               reasoningIndexById.set(value.id, idx);
               content.push({ type: 'reasoning', text: '', providerMetadata: value.providerMetadata });
             }
-            const entry = content[idx] as LanguageModelV2Content & { type: 'reasoning' };
+            const entry = content[idx] as LanguageModelV3Content & { type: 'reasoning' };
             entry.text += value.delta;
             break;
           }
@@ -215,7 +216,7 @@ export const wrapStreamOnly = (model: LanguageModelV2): LanguageModelV2 => ({
           case 'reasoning-end': {
             const idx = reasoningIndexById.get(value.id);
             if (idx !== undefined && value.providerMetadata) {
-              const entry = content[idx] as LanguageModelV2Content & { type: 'reasoning' };
+              const entry = content[idx] as LanguageModelV3Content & { type: 'reasoning' };
               entry.providerMetadata = value.providerMetadata;
             }
             break;
@@ -223,6 +224,7 @@ export const wrapStreamOnly = (model: LanguageModelV2): LanguageModelV2 => ({
 
           case 'tool-call':
           case 'tool-result':
+          case 'tool-approval-request':
           case 'file':
           case 'source':
             content.push(value);

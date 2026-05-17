@@ -20,7 +20,7 @@
     "check": "npm run typecheck && npm run lint && npm run format:check && npm test"
   },
   "dependencies": {
-    "@ai-sdk/openai": "^2.0.101"
+    "@ai-sdk/openai": "^3.0.64"
   },
   "devDependencies": {
     "@aiderdesk/extensions": "^0.15.0",

@@ -1,15 +1,34 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import type { LanguageModelV2, LanguageModelV2CallOptions, LanguageModelV2StreamPart } from '@ai-sdk/provider';
+import type {
+  LanguageModelV3,
+  LanguageModelV3CallOptions,
+  LanguageModelV3FinishReason,
+  LanguageModelV3StreamPart,
+  LanguageModelV3Usage,
+} from '@ai-sdk/provider';
 
 import { formatStreamError, wrapStreamOnly } from '../stream-only-adapter';
 
-const stubCallOptions: LanguageModelV2CallOptions = {
+const stubCallOptions: LanguageModelV3CallOptions = {
   prompt: [],
-} as unknown as LanguageModelV2CallOptions;
+} as unknown as LanguageModelV3CallOptions;
 
-const mkStream = (parts: LanguageModelV2StreamPart[]): ReadableStream<LanguageModelV2StreamPart> =>
-  new ReadableStream<LanguageModelV2StreamPart>({
+// V3 usage requires every sub-field to be set (not optional). These helpers
+// keep the per-test fixtures readable by hiding the cacheRead/noCache/raw
+// fields the adapter doesn't care about.
+const mkUsage = (inputTotal: number, outputTotal: number): LanguageModelV3Usage => ({
+  inputTokens: { total: inputTotal, noCache: inputTotal, cacheRead: undefined, cacheWrite: undefined },
+  outputTokens: { total: outputTotal, text: outputTotal, reasoning: undefined },
+});
+
+const mkFinish = (unified: LanguageModelV3FinishReason['unified']): LanguageModelV3FinishReason => ({
+  unified,
+  raw: unified,
+});
+
+const mkStream = (parts: LanguageModelV3StreamPart[]): ReadableStream<LanguageModelV3StreamPart> =>
+  new ReadableStream<LanguageModelV3StreamPart>({
     start(controller) {
       for (const p of parts) controller.enqueue(p);
       controller.close();
@@ -17,10 +36,10 @@ const mkStream = (parts: LanguageModelV2StreamPart[]): ReadableStream<LanguageMo
   });
 
 const mkModel = (
-  parts: LanguageModelV2StreamPart[],
+  parts: LanguageModelV3StreamPart[],
   extras: { request?: { body?: unknown }; response?: { headers?: Record<string, string> } } = {},
-): LanguageModelV2 => ({
-  specificationVersion: 'v2',
+): LanguageModelV3 => ({
+  specificationVersion: 'v3',
   provider: 'codex-auth',
   modelId: 'gpt-5.5',
   supportedUrls: {},
@@ -38,8 +57,8 @@ describe('wrapStreamOnly', () => {
       { type: 'text-end', id: 't1' },
       {
         type: 'finish',
-        finishReason: 'stop',
-        usage: { inputTokens: 5, outputTokens: 3, totalTokens: 8 },
+        finishReason: mkFinish('stop'),
+        usage: mkUsage(5, 3),
       },
     ]);
 
@@ -49,8 +68,8 @@ describe('wrapStreamOnly', () => {
     expect(inner.doStream).toHaveBeenCalledTimes(1);
     expect(inner.doGenerate).not.toHaveBeenCalled();
     expect(result.content).toEqual([{ type: 'text', text: 'Hello, world!', providerMetadata: undefined }]);
-    expect(result.finishReason).toBe('stop');
-    expect(result.usage).toEqual({ inputTokens: 5, outputTokens: 3, totalTokens: 8 });
+    expect(result.finishReason).toEqual(mkFinish('stop'));
+    expect(result.usage).toEqual(mkUsage(5, 3));
   });
 
   it('preserves stream-emission order across reasoning and text parts', async () => {
@@ -64,8 +83,8 @@ describe('wrapStreamOnly', () => {
       { type: 'text-end', id: 't1' },
       {
         type: 'finish',
-        finishReason: 'stop',
-        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        finishReason: mkFinish('stop'),
+        usage: mkUsage(1, 1),
       },
     ]);
 
@@ -86,8 +105,8 @@ describe('wrapStreamOnly', () => {
       { type: 'text-end', id: 't1' },
       {
         type: 'finish',
-        finishReason: 'stop',
-        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        finishReason: mkFinish('stop'),
+        usage: mkUsage(1, 1),
       },
     ]);
 
@@ -103,22 +122,22 @@ describe('wrapStreamOnly', () => {
       { type: 'tool-call', toolCallId: 'tc_1', toolName: 'do_thing', input: '{"a":1}' },
       {
         type: 'finish',
-        finishReason: 'tool-calls',
-        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        finishReason: mkFinish('tool-calls'),
+        usage: mkUsage(1, 1),
       },
     ]);
 
     const result = await wrapStreamOnly(inner).doGenerate(stubCallOptions);
 
     expect(result.content).toEqual([{ type: 'tool-call', toolCallId: 'tc_1', toolName: 'do_thing', input: '{"a":1}' }]);
-    expect(result.finishReason).toBe('tool-calls');
+    expect(result.finishReason).toEqual(mkFinish('tool-calls'));
   });
 
   it('passes doStream through to the inner model so streamText keeps its native streaming path', async () => {
     const inner = mkModel([]);
     const wrapped = wrapStreamOnly(inner);
 
-    const opts = { foo: 'bar' } as unknown as LanguageModelV2CallOptions;
+    const opts = { foo: 'bar' } as unknown as LanguageModelV3CallOptions;
     await wrapped.doStream(opts);
 
     expect(inner.doStream).toHaveBeenCalledTimes(1);
@@ -129,7 +148,7 @@ describe('wrapStreamOnly', () => {
     const inner = mkModel([]);
     const wrapped = wrapStreamOnly(inner);
 
-    const opts = { prompt: [], maxOutputTokens: 128000 } as unknown as LanguageModelV2CallOptions;
+    const opts = { prompt: [], maxOutputTokens: 128000 } as unknown as LanguageModelV3CallOptions;
     await wrapped.doStream(opts);
 
     const forwarded = (inner.doStream as ReturnType<typeof vi.fn>).mock.calls[0]?.[0];
@@ -144,13 +163,13 @@ describe('wrapStreamOnly', () => {
       { type: 'text-end', id: 't1' },
       {
         type: 'finish',
-        finishReason: 'stop',
-        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        finishReason: mkFinish('stop'),
+        usage: mkUsage(1, 1),
       },
     ]);
     const wrapped = wrapStreamOnly(inner);
 
-    const opts = { prompt: [], maxOutputTokens: 128000 } as unknown as LanguageModelV2CallOptions;
+    const opts = { prompt: [], maxOutputTokens: 128000 } as unknown as LanguageModelV3CallOptions;
     await wrapped.doGenerate(opts);
 
     const forwarded = (inner.doStream as ReturnType<typeof vi.fn>).mock.calls[0]?.[0];
@@ -161,7 +180,7 @@ describe('wrapStreamOnly', () => {
     const inner = mkModel([]);
     const wrapped = wrapStreamOnly(inner);
 
-    const opts = { prompt: [], maxOutputTokens: 128000 } as unknown as LanguageModelV2CallOptions & {
+    const opts = { prompt: [], maxOutputTokens: 128000 } as unknown as LanguageModelV3CallOptions & {
       maxOutputTokens: number;
     };
     await wrapped.doStream(opts);
@@ -196,8 +215,8 @@ describe('wrapStreamOnly', () => {
         { type: 'text-end', id: 't1' },
         {
           type: 'finish',
-          finishReason: 'stop',
-          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+          finishReason: mkFinish('stop'),
+          usage: mkUsage(1, 1),
         },
       ],
       { request: { body: { foo: 'bar' } }, response: { headers: { 'x-request-id': 'abc' } } },
@@ -213,7 +232,7 @@ describe('wrapStreamOnly', () => {
     const inner = mkModel([]);
     const wrapped = wrapStreamOnly(inner);
 
-    expect(wrapped.specificationVersion).toBe('v2');
+    expect(wrapped.specificationVersion).toBe('v3');
     expect(wrapped.provider).toBe('codex-auth');
     expect(wrapped.modelId).toBe('gpt-5.5');
     expect(wrapped.supportedUrls).toBe(inner.supportedUrls);
@@ -226,8 +245,8 @@ describe('wrapStreamOnly', () => {
       { type: 'text-delta', id: 't1', delta: 'b' },
       {
         type: 'finish',
-        finishReason: 'stop',
-        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        finishReason: mkFinish('stop'),
+        usage: mkUsage(1, 1),
       },
     ]);
 
