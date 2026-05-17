@@ -607,7 +607,7 @@ const PROVIDER_ID = 'codex-auth';
 export default class AiderDeskCodexExtension implements Extension {
   static metadata = {
     name: 'AiderDesk Codex Extension',
-    version: '1.2.0',
+    version: '1.3.0',
     description:
       'OpenAI Codex provider that consumes pre-provisioned Codex auth from a configurable filesystem path (no browser OAuth).',
     author: 'Kareem Hepburn',
